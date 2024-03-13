@@ -1,0 +1,118 @@
+var points = table;
+
+Map.centerObject(points)
+Map.addLayer(points.style({color:'red',pointSize:1}),{},'randomPoints')
+
+// 获取Landsat8 影像数据
+var l8 = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR");
+var l8band = ["B2","B3","B4","B5","B6","B7"];
+var bandNames = ['blue','green','red','nir','swir1','swir2'];
+var collection1 = l8.filterDate('2020-01-01', '2020-12-30') 
+                  .filterBounds(points) 
+                  .filter(ee.Filter.lte('CLOUD_COVER',10))//云量设置
+                  .sort('CLOUD_COVER')//按云量排序
+                  
+var collection = collection1.median();
+Map.addLayer(collection,{},"c")
+var collection_va = collection1.reduce(ee.Reducer.variance());
+
+var get_NDVI = function(image){
+  image = image.clip(points);
+  var NDVI=image.normalizedDifference(['B5','B4']).rename(['NDVI']);
+  image=image.addBands(NDVI)
+  return image
+};
+
+var get_NDWI = function(image){
+  image = image.clip(points);
+  var NDWI=image.normalizedDifference(['B3','B5']).rename(['NDWI']);
+  image=image.addBands(NDWI)
+  return image
+};
+
+var get_MNDWI = function(image){
+  image = image.clip(points);
+  var MNDWI=image.normalizedDifference(['B3','B6']).rename(['MNDWI']);
+  image=image.addBands(MNDWI)
+  return image
+};
+
+var get_EVI = function(image){
+  image = image.clip(points);
+  var EVI = image.expression('2.5 * ((NIR - RED)/(NIR + 6 * RED - 7.5 * BLUE + 1))',{
+  'NIR':image.select('B5'),
+  'RED':image.select('B4'),
+  'BLUE':image.select('B2'),
+  }).rename(['EVI']);
+  image=image.addBands(EVI)
+  return image
+};
+
+var get_SR = function(image){
+  image = image.clip(points);
+  var SR = image.expression('NIR/RED',{
+  'NIR':image.select('B5'),
+  'RED':image.select('B4'),
+  }).rename(['SR']);
+  image=image.addBands(SR)
+  return image
+};
+
+var dataset1 = l8.filterDate('2020-01-01', '2020-12-30')
+              .filterBounds(points)
+              .map(get_NDVI)
+              .map(get_NDWI)
+              .map(get_MNDWI)
+              .map(get_EVI)
+              .map(get_SR)
+var dataset = dataset1.median();
+var dataset_va = dataset1.reduce(ee.Reducer.variance());
+              
+var NDVI = dataset.select('NDVI');
+var NDVI_va = dataset_va.select('NDVI_variance');
+
+var NDWI = dataset.select('NDWI');
+var NDWI_va = dataset_va.select('NDWI_variance');
+
+var MNDWI = dataset.select('MNDWI');
+var MNDWI_va = dataset_va.select('MNDWI_variance');
+
+var EVI = dataset.select('EVI');
+var EVI_va = dataset_va.select('EVI_variance');
+
+var SR = dataset.select('SR');
+var SR_va = dataset_va.select('SR_variance');
+
+var imageLayers =  ee.Image(ee.ImageCollection("ESA/WorldCover/v100").first()) //地表覆盖度图
+                      .addBands(ee.Image('CGIAR/SRTM90_V4').select('elevation'))//高程数据
+                      .rename(['LandCover','DEM'])// 波段重命名
+                      .addBands(collection)
+                      .addBands(collection_va)
+                      .addBands(NDVI)
+                      .addBands(NDWI)
+                      .addBands(MNDWI)
+                      .addBands(EVI)
+                      .addBands(SR)
+                      .addBands(NDVI_va)
+                      .addBands(NDWI_va)
+                      .addBands(MNDWI_va)
+                      .addBands(EVI_va)
+                      .addBands(SR_va)
+                      //.aside(print)
+
+// -----------------------------------
+var sample_points = imageLayers.sampleRegions({
+  collection: points,
+  scale:10,//A nominal scale in meters of the projection to sample in. If unspecified,the scale of the image's first band is used.
+  geometries:true //注意，这个geometries属性要加上，如果不加上，结果不会有地理坐标
+})
+print('sample_points',sample_points)
+
+// 导出数据至Google drive
+Export.table.toDrive({
+    collection: sample_points,
+    description: 'sample_points',
+    fileFormat: 'CSV'
+  });
+ 
+ 
